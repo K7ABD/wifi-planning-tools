@@ -7,37 +7,43 @@ my $ITERATIONS = 10000;
 
 my @aps = ('Basement', 'Kitchen', 'Living Room', 'Master', 'Office', 'Guest Room');
 my @channels = ('1', '6', '11');
-my @attenuations = (0, -4, -8, -12, -16, -200); # H, H/M, M, M/L, L, Off
+my @attenuations = (0, -4, -8, -12, -16, -200); # Effictively: H, H/M, M, M/L, L, Off
 
-my %locations; # per access point
-$locations{'Living Room'} = [-66, -79, -41, -70, -54, -91];
-$locations{'Dining Room'} = [-75, -58, -60, -63, -55, -68];
-$locations{'Office'}      = [-80, -62, -70, -60, -44, -85];
-$locations{'Sunroom'}     = [-91, -61, -89, -72, -78, -84];
-$locations{'Kitchen'}     = [-83, -47, -72, -55, -53, -73];
+my %observations; # Measured RSSI of every access point at a handful of lcoations throughout the house.
+                  # The order of these in the array should align with the order of the @aps array above.
+                  # This would probably be more clear if it was a hash..
+$observations{'Living Room'} = [-66, -79, -41, -70, -54, -91];
+$observations{'Dining Room'} = [-75, -58, -60, -63, -55, -68];
+$observations{'Office'}      = [-80, -62, -70, -60, -44, -85];
+$observations{'Sunroom'}     = [-91, -61, -89, -72, -78, -84];
+$observations{'Kitchen'}     = [-83, -47, -72, -55, -53, -73];
 
 
-my %noises; # (1, 6, 11);
+my %noises; # The measured noise level (aka neighbors) on each of channels (1, 6, 11);
 $noises{'Living Room'} = [-93, -94, -90];
 $noises{'Dining Room'} = [-90, -96, -90];
 $noises{'Office'}      = [-94, -94, -84];
 $noises{'Sunroom'}     = [-92, -87, -89];
 $noises{'Kitchen'}     = [-93, -85, -82];
 
+
 my %channel_indexes;
 for (my $i = 0; $i < scalar(@channels); $i++)
 {
+    # reverse lookup for channel_index to channel name
     $channel_indexes{$channels[$i]} = $i;
 }
 
 
+
 my $best_worst_snr = 0;
-my $best_plan = '';
-my $best_report = '';
+my $best_avg_snr   = 0;
+my $best_plan      = '';
+my $best_report    = '';
 for (my $i = 0; $i < $ITERATIONS; $i++)
 {
     my %ap_chans;
-    my @loc_snr;
+    my @obs_snr;
     my $report = '';
 
     # randomly assign channels to APs (a smarter person would iterate through all possible permutations):
@@ -47,24 +53,24 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
                                                $attenuations[int(rand(scalar(@attenuations)))]);
     }
 
-    # foreach location, find the strongest AP, then then the highest interference:
-    foreach my $loc (keys %locations)
+    # foreach observation, find the strongest AP, then then the highest interference:
+    foreach my $obs (keys %observations)
     {
-        debug("Looking at Location '$loc':\n");
+        debug("Looking at Location '$obs':\n");
 
 
-        # find the strongest AP for this location:
+        # find the strongest AP for this observation:
         my $best_rssi = -200;
         my $best_ap_index = -1;
         debug("    Looking for strongest AP...\n");
         for (my $ap_index = 0; $ap_index < scalar(@aps); $ap_index++)
         {
-            my $loc_ap_rssi = get_rssi($ap_chans{$aps[$ap_index]}, $locations{$loc}[$ap_index]);
+            my $obs_ap_rssi = get_rssi($ap_chans{$aps[$ap_index]}, $observations{$obs}[$ap_index]);
 
-            debug("        AP '" . $aps[$ap_index] . "' has RSSI of $loc_ap_rssi\n");
-            if ($loc_ap_rssi > $best_rssi)
+            debug("        AP '" . $aps[$ap_index] . "' has RSSI of $obs_ap_rssi\n");
+            if ($obs_ap_rssi > $best_rssi)
             {
-                $best_rssi = $loc_ap_rssi;
+                $best_rssi = $obs_ap_rssi;
                 $best_ap_index = $ap_index;
             }
         }
@@ -72,7 +78,7 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
         debug("        ** Best AP is '" . $aps[$best_ap_index] . "' at $best_rssi\n");
         
         my $best_ap_channel      = get_channel($ap_chans{$aps[$best_ap_index]});
-        my $highest_noise        = $noises{$loc}[$channel_indexes{$best_ap_channel}];
+        my $highest_noise        = $noises{$obs}[$channel_indexes{$best_ap_channel}];
         my $highest_noise_source = 'Neighbors';
 
         # find the noise level (either from external noise, or from other APs)
@@ -81,7 +87,7 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
             my $ch = get_channel($ap_chans{$aps[$ap_index]});
             if ($ch eq $best_ap_channel && $ap_index != $best_ap_index)
             {
-                my $rssi = get_rssi($ap_chans{$aps[$ap_index]}, $locations{$loc}[$ap_index]);
+                my $rssi = get_rssi($ap_chans{$aps[$ap_index]}, $observations{$obs}[$ap_index]);
                 if ($rssi > $highest_noise)
                 {
                     $highest_noise = $rssi;
@@ -90,23 +96,23 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
             }
         }
 
-        # caluclate the SnR at this location
+        # caluclate the SnR at this observation
         my $snr = $best_rssi - $highest_noise;
 
-        push (@loc_snr, $snr);
+        push (@obs_snr, $snr);
 
-        # create an entry in the "Report" for this location... it's kinda silly to generate this report everyt time
+        # create an entry in the "Report" for this observation... it's kinda silly to generate this report everyt time
         # since we gonna throw away all but the best of them, but it's easier to creat it now...
-        my $rep = sprintf("%-20s %-20s %10s %8s %17s %-32s\n", $loc, $aps[$best_ap_index], $best_rssi, $snr, $highest_noise, $highest_noise_source);
+        my $rep = sprintf("%-20s %-20s %10s %8s %17s %-32s\n", $obs, $aps[$best_ap_index], $best_rssi, $snr, $highest_noise, $highest_noise_source);
 
         debug($rep);
         $report .= $rep;
     }
 
-    # Find the location with the worst SnR///
-    my $worst_snr = $loc_snr[0];
+    # Find the observation with the worst SnR///
+    my $worst_snr = $obs_snr[0];
     my $sum = 0;
-    foreach my $snr (@loc_snr)
+    foreach my $snr (@obs_snr)
     {
         $sum += $snr;
 
@@ -115,7 +121,7 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
             $worst_snr = $snr;
         }
     }
-    my $avg_snr = $sum / scalar(@loc_snr); # TODO: do something with the average SnR
+    my $avg_snr = $sum / scalar(@obs_snr);
 
     # Create the wifi (which APs are on which channel and at what attenuation)
     my $plan = '';
@@ -127,11 +133,12 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
     }
 
     # If this is the best one yet, let's capture that...
-    if ($worst_snr > $best_worst_snr)
+    if ($worst_snr > $best_worst_snr || ($worst_snr == $best_worst_snr && $avg_snr > $best_avg_snr))
     {
         $best_worst_snr = $worst_snr;
         $best_plan      = $plan;
         $best_report    = $report;
+        $best_avg_snr   = $avg_snr;
     }
 }
 
@@ -149,6 +156,7 @@ printf("%-20s %-20s %10s %8s %17s %-32s\n", '--------', '-------', '----------',
 print $best_report;
 
 print "\nWorst SNR: $best_worst_snr\n";
+print "Average SNR: $best_avg_snr\n";
 
 
 ### Helpers
