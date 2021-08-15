@@ -40,23 +40,20 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
     my @loc_snr;
     my $report = '';
 
-    #TODO: ap_chans needs to be updated to ch,atten format including generating it and reading it
-    #      then anywhere we read from $locations needs to handle power levels
-
-    # randomly assign channels to APs:
+    # randomly assign channels to APs (a smarter person would iterate through all possible permutations):
     foreach my $ap (@aps)
     {
         $ap_chans{$ap} = set_channel_and_attenuation($channels[int(rand(scalar(@channels)))],
                                                $attenuations[int(rand(scalar(@attenuations)))]);
     }
 
-    # foreach location, find the strongest AP:
+    # foreach location, find the strongest AP, then then the highest interference:
     foreach my $loc (keys %locations)
     {
         debug("Looking at Location '$loc':\n");
 
 
-        # find the strongest AP:
+        # find the strongest AP for this location:
         my $best_rssi = -200;
         my $best_ap_index = -1;
         debug("    Looking for strongest AP...\n");
@@ -93,16 +90,20 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
             }
         }
 
+        # caluclate the SnR at this location
         my $snr = $best_rssi - $highest_noise;
 
         push (@loc_snr, $snr);
 
+        # create an entry in the "Report" for this location... it's kinda silly to generate this report everyt time
+        # since we gonna throw away all but the best of them, but it's easier to creat it now...
         my $rep = sprintf("%-20s %-20s %10s %8s %17s %-32s\n", $loc, $aps[$best_ap_index], $best_rssi, $snr, $highest_noise, $highest_noise_source);
 
         debug($rep);
         $report .= $rep;
     }
 
+    # Find the location with the worst SnR///
     my $worst_snr = $loc_snr[0];
     my $sum = 0;
     foreach my $snr (@loc_snr)
@@ -114,9 +115,9 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
             $worst_snr = $snr;
         }
     }
+    my $avg_snr = $sum / scalar(@loc_snr); # TODO: do something with the average SnR
 
-    my $avg_snr = $sum / scalar(@loc_snr);
-
+    # Create the wifi (which APs are on which channel and at what attenuation)
     my $plan = '';
     foreach my $ap_ch (keys %ap_chans)
     {
@@ -125,6 +126,7 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
         $plan .= sprintf("%-20s %8s %12d\n", $ap_ch, $ch, $at);
     }
 
+    # If this is the best one yet, let's capture that...
     if ($worst_snr > $best_worst_snr)
     {
         $best_worst_snr = $worst_snr;
@@ -133,20 +135,23 @@ for (my $i = 0; $i < $ITERATIONS; $i++)
     }
 }
 
+# Print the results:
 print "\n****** Access Point and Channel Configuration ****** \n\n";
 printf ("%-20s %8s %12s\n", "Access Point", "Channel", "Attenuation");
 printf ("%-20s %8s %12s\n", "------------", "-------", "-----------");
 print $best_plan;
 
 print "\n\n****** Location - predicted best AP and SnR\n\n";
-#At Location 'Living Room', best AP is 'Living Room' on Channel 11 with RSSI -41 and SnR of 33 (highest noise is -74 from Local-AP (Master))
-printf("%-20s %-20s %10s %8s %17s %-32s\n", 'Location', 'Best AP', 'RSSI (dBm)', 'SnR (dB)', 'Noise Level (dBm)', 'Noise Source');
-printf("%-20s %-20s %10s %8s %17s %-32s\n", '--------', '-------', '----------', '--------', '-----------------', '------------');
+printf("%-20s %-20s %10s %8s %17s %-32s\n", 'Location', 'Best AP', 'RSSI (dBm)', 'SnR (dB)', 
+        'Noise Level (dBm)', 'Noise Source');
+printf("%-20s %-20s %10s %8s %17s %-32s\n", '--------', '-------', '----------', '--------', 
+        '-----------------', '------------');
 print $best_report;
 
 print "\nWorst SNR: $best_worst_snr\n";
 
 
+### Helpers
 sub get_channel
 {
     my ($ch_atten) = @_;
